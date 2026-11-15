@@ -235,7 +235,7 @@ def wow_badge(d):
     pts = burst_polygon(bx, by, 235, 168)
     d.polygon(pts, fill=GOLD + (255,), outline=INK + (255,))
     d.polygon(pts, outline=(255, 127, 42, 255), width=10)
-    font = ImageFont.truetype(BOLD_FONT, 118)
+    font = ImageFont.truetype(BOLD_FONT, 110)
     d.text((bx, by), "WOW!", font=font, fill=INK + (255,),
            anchor="mm", stroke_width=0)
 
