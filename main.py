@@ -1,24 +1,19 @@
 #!/usr/bin/env python3
-"""Cosmic Kitten — make.fun entry for "Make the AI judge excited".
+"""Cosmic Kitten entry point.
 
-This program ships one picture: a cheerful kitten astronaut riding a
-rainbow rocket through a candy-coloured nebula. The picture is rendered
-in advance by generate_image.py and stored in this repo as asset.png;
-running this file only copies that asset to the judge's output folder,
-so the result is identical on every run.
+Copies the pre-generated asset.png into the make.fun output directory
+as entry.png, after validating that it is a real PNG under 1 MiB.
 
-Only the Python standard library is used. No network, no secrets, no
-model calls, no clock reads. Output is always entry.png, a PNG of at
-most 1 MiB.
+Stdlib only. Exit code 0 on success, 1 on any failure.
 """
 import os
+import shutil
 import sys
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-ASSET = HERE / "asset.png"
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+SOURCE = "asset.png"
+TARGET_NAME = "entry.png"
 MAX_BYTES = 1024 * 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def fail(message):
@@ -26,25 +21,34 @@ def fail(message):
     return 1
 
 
-def check_png(path):
-    """Return True when *path* starts with the 8-byte PNG signature."""
-    with open(path, "rb") as stream:
-        return stream.read(len(PNG_SIGNATURE)) == PNG_SIGNATURE
+def main():
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if not out_dir:
+        return fail("MAKEFUN_OUTPUT_DIR is not set")
 
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(here, SOURCE)
+    if not os.path.isfile(src):
+        return fail(f"{SOURCE} not found next to main.py")
 
-def deliver():
-    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
-    destination = out_dir / "entry.png"
-    if not check_png(ASSET):
-        return fail(f"{ASSET} does not look like a PNG file")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    data = ASSET.read_bytes()
-    if len(data) > MAX_BYTES:
-        return fail(f"asset is {len(data)} bytes, over the {MAX_BYTES} limit")
-    destination.write_bytes(data)
-    print(f"wrote {destination} ({len(data)} bytes)")
+    # Validate the source file before touching the output directory.
+    size = os.path.getsize(src)
+    if size > MAX_BYTES:
+        return fail(f"{SOURCE} is {size} bytes, over the 1 MiB limit")
+    if size == 0:
+        return fail(f"{SOURCE} is empty")
+
+    with open(src, "rb") as fh:
+        header = fh.read(len(PNG_MAGIC))
+    if header != PNG_MAGIC:
+        return fail(f"{SOURCE} is not a PNG file (bad header)")
+
+    os.makedirs(out_dir, exist_ok=True)
+    dst = os.path.join(out_dir, TARGET_NAME)
+    shutil.copyfile(src, dst)
+    print(f"wrote {dst} ({size} bytes)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(deliver())
+    sys.exit(main())
