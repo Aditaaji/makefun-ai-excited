@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Draw the Cosmic Kitten picture for make.fun ai-excited-01.
+"""Render the Cosmic Kitten artwork for make.fun ai-excited-01.
 
-A joyful kitten astronaut rides a rainbow rocket through a candy nebula,
-surrounded by fireworks, confetti and a big WOW! burst. The drawing is
-fully deterministic (fixed seed, no network, no clock): running this file
-always writes the same bytes.
+Scene: a joyful kitten astronaut rides a rainbow rocket through a candy
+nebula, past a ringed planet, fireworks, confetti and a big WOW! burst.
 
-Usage:  python3 generate_image.py   ->  writes asset.png (1024x1024)
+Fully deterministic: one fixed seed drives every random choice, nothing
+reads the clock or the network, and the output PNG is byte-identical on
+every run. Drawn at 2x and downsampled for smooth edges.
+
+Usage:  python3 generate_image.py   ->  writes asset.png (1024 x 1024)
 """
 import math
 import random
@@ -14,279 +16,288 @@ import random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-SEED = 20261116
-FINAL = 1024               # output size, pixels
-SS = 2                     # supersampling: draw at 2048, shrink to 1024
-W = FINAL * SS
-OUT = "asset.png"
-BOLD_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+DRAW_SEED = 16112026
+OUT_PX = 1024
+OVERSAMPLE = 2
+CANVAS = OUT_PX * OVERSAMPLE
+TARGET = "asset.png"
+HEAVY_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-rng = random.Random(SEED)
+dice = random.Random(DRAW_SEED)
 
-# ---- palette ----
-DEEP_SPACE = (24, 10, 48)
-PLUM = (96, 44, 138)
-RASPBERRY = (205, 78, 128)
-SUNSET = (255, 142, 68)
-INK = (43, 16, 85)
-SNOW = (255, 255, 255)
-CREAM = (255, 244, 214)
-FUR = (255, 159, 67)
-FUR_SHADE = (230, 126, 34)
-ROSE = (255, 107, 139)
-ROSE_PALE = (255, 183, 197)
-GOLD = (255, 211, 42)
-MINT = (45, 212, 191)
-SKY = (104, 211, 255)
-CHERRY = (255, 71, 87)
-LEAF = (46, 213, 115)
-VIOLET = (150, 108, 255)
-RAINBOW = [CHERRY, FUR, GOLD, LEAF, SKY, VIOLET]
-
-
-def sky_gradient(width, height, stops):
-    """Vertical gradient from a list of (position 0..1, rgb) stops."""
-    xs = np.array([s[0] for s in stops], dtype=float)
-    rgbs = np.array([s[1] for s in stops], dtype=float)
-    frac = np.linspace(0, 1, height)
-    arr = np.zeros((height, width, 3), dtype=np.uint8)
-    for ch in range(3):
-        col = np.interp(frac, xs, rgbs[:, ch])
-        arr[:, :, ch] = np.tile(col[:, None], (1, width)).astype(np.uint8)
-    return Image.fromarray(arr, "RGB")
+# ---- colours ----
+NIGHT = (22, 9, 46)
+GRAPE = (98, 42, 140)
+BERRY = (208, 74, 130)
+EMBER = (255, 140, 66)
+DARK = (40, 15, 82)
+WHITE = (255, 255, 255)
+VANILLA = (255, 243, 210)
+GINGER = (255, 158, 66)
+GINGER_DARK = (228, 124, 32)
+PINK = (255, 105, 138)
+PINK_SOFT = (255, 180, 196)
+SUNNY = (255, 210, 40)
+AQUA = (44, 210, 190)
+AZURE = (100, 210, 255)
+POPPY = (255, 70, 86)
+MINTY = (44, 212, 114)
+LILAC = (148, 106, 255)
+SPECTRUM = [POPPY, GINGER, SUNNY, MINTY, AZURE, LILAC]
 
 
-def quad_bezier(a, b, c, steps=140):
-    """Points along a quadratic Bezier curve from a via b to c."""
+def vertical_blend(side, tall, anchors):
+    """Blend *anchors* [(stop 0..1, rgb), ...] down a tall canvas."""
+    stops = np.array([a[0] for a in anchors], dtype=float)
+    tones = np.array([a[1] for a in anchors], dtype=float)
+    ramp = np.linspace(0, 1, tall)
+    sheet = np.zeros((tall, side, 3), dtype=np.uint8)
+    for band in range(3):
+        column = np.interp(ramp, stops, tones[:, band])
+        sheet[:, :, band] = np.tile(column[:, None], (1, side)).astype(np.uint8)
+    return Image.fromarray(sheet, "RGB")
+
+
+def bezier_quad(p0, p1, p2, n=140):
+    """Sample a quadratic Bezier curve from p0 via p1 to p2."""
+    pts = []
+    for k in range(n + 1):
+        t = k / n
+        u = 1 - t
+        pts.append((u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+                    u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1]))
+    return pts
+
+
+def nudge(pts, dx, dy):
+    return [(px + dx, py + dy) for px, py in pts]
+
+
+def starburst(cx, cy, long_r, short_r, points=14):
+    """Vertices of a spiky badge, alternating long and short radii."""
     out = []
-    for i in range(steps + 1):
-        t = i / steps
-        x = (1 - t) ** 2 * a[0] + 2 * (1 - t) * t * b[0] + t ** 2 * c[0]
-        y = (1 - t) ** 2 * a[1] + 2 * (1 - t) * t * b[1] + t ** 2 * c[1]
-        out.append((x, y))
+    for i in range(points * 2):
+        radius = long_r if i % 2 == 0 else short_r
+        theta = math.pi * i / points - math.pi / 2
+        out.append((cx + radius * math.cos(theta),
+                    cy + radius * math.sin(theta)))
     return out
 
 
-def shift(points, dx, dy):
-    return [(x + dx, y + dy) for x, y in points]
-
-
-def burst_polygon(cx, cy, outer, inner, spikes=14):
-    """Alternating long/short vertices of a starburst badge."""
-    verts = []
-    for i in range(spikes * 2):
-        r = outer if i % 2 == 0 else inner
-        ang = math.pi * i / spikes - math.pi / 2
-        verts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
-    return verts
-
-
-def scatter_stars(d):
-    for _ in range(240):
-        x = rng.uniform(0, W)
-        y = rng.uniform(0, W * 0.85)
-        r = rng.uniform(2, 7)
-        col = rng.choice([SNOW, (255, 240, 170), (180, 230, 255)])
-        d.ellipse([x - r, y - r, x + r, y + r],
-                  fill=col + (rng.randint(140, 255),))
+def paint_stars(pen):
+    for _ in range(250):
+        x = dice.uniform(0, CANVAS)
+        y = dice.uniform(0, CANVAS * 0.85)
+        r = dice.uniform(2, 7)
+        tint = dice.choice([WHITE, (255, 238, 168), (178, 228, 255)])
+        pen.ellipse([x - r, y - r, x + r, y + r],
+                    fill=tint + (dice.randint(140, 255),))
     for _ in range(14):  # four-point sparkles
-        x = rng.uniform(80, W - 80)
-        y = rng.uniform(80, W * 0.7)
-        r = rng.uniform(14, 30)
-        col = (255, 255, 255, 230)
-        d.line([x - r, y, x + r, y], fill=col, width=5)
-        d.line([x, y - r, x, y + r], fill=col, width=5)
+        x = dice.uniform(80, CANVAS - 80)
+        y = dice.uniform(80, CANVAS * 0.7)
+        r = dice.uniform(14, 30)
+        sparkle = (255, 255, 255, 230)
+        pen.line([x - r, y, x + r, y], fill=sparkle, width=5)
+        pen.line([x, y - r, x, y + r], fill=sparkle, width=5)
 
 
-def ringed_planet(d):
-    cx, cy, rad = 330, 330, 150
-    d.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], fill=MINT + (255,))
-    d.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
-              outline=(20, 90, 90, 255), width=8)
-    d.pieslice([cx - rad, cy - rad, cx + rad, cy + rad], 20, 160,
-               fill=(20, 120, 110, 110))
-    d.ellipse([cx - 210, cy - 28, cx + 210, cy + 28],
-              outline=GOLD + (255,), width=16)
+def paint_planet(pen):
+    cx, cy, rad = 320, 320, 145
+    pen.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                fill=AQUA + (255,))
+    pen.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                outline=(18, 88, 88, 255), width=8)
+    pen.pieslice([cx - rad, cy - rad, cx + rad, cy + rad], 25, 165,
+                 fill=(18, 118, 108, 110))
+    pen.ellipse([cx - 205, cy - 26, cx + 205, cy + 26],
+                outline=SUNNY + (255,), width=16)
 
 
-def crater_moon(d):
-    cx, cy, rad = 1760, 1700, 110
-    d.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
-              fill=(255, 236, 170, 255))
-    for kx, ky, kr in [(1720, 1660, 26), (1800, 1740, 34), (1760, 1620, 18)]:
-        d.ellipse([kx - kr, ky - kr, kx + kr, ky + kr],
-                  fill=(232, 200, 120, 255))
+def paint_moon(pen):
+    cx, cy, rad = 1770, 1710, 108
+    pen.ellipse([cx - rad, cy - rad, cx + rad, cy + rad],
+                fill=(255, 235, 168, 255))
+    for kx, ky, kr in [(1730, 1670, 25), (1810, 1750, 33), (1770, 1630, 17)]:
+        pen.ellipse([kx - kr, ky - kr, kx + kr, ky + kr],
+                    fill=(230, 198, 118, 255))
 
 
-def fireworks(d):
-    for cx, cy, col in [(300, 620, SKY), (1900, 850, GOLD), (1820, 1250, ROSE)]:
+def paint_fireworks(pen):
+    for cx, cy, tint in [(290, 610, AZURE), (1910, 840, SUNNY),
+                         (1830, 1240, PINK)]:
         for k in range(16):
-            ang = 2 * math.pi * k / 16 + rng.uniform(-0.1, 0.1)
-            ln = rng.uniform(70, 130)
-            x2 = cx + ln * math.cos(ang)
-            y2 = cy + ln * math.sin(ang)
-            d.line([cx, cy, x2, y2], fill=col + (255,), width=9)
-            d.ellipse([x2 - 10, y2 - 10, x2 + 10, y2 + 10], fill=col + (255,))
-        d.ellipse([cx - 14, cy - 14, cx + 14, cy + 14], fill=SNOW + (255,))
+            ang = 2 * math.pi * k / 16 + dice.uniform(-0.1, 0.1)
+            length = dice.uniform(70, 130)
+            tip = (cx + length * math.cos(ang), cy + length * math.sin(ang))
+            pen.line([cx, cy, tip], fill=tint + (255,), width=9)
+            pen.ellipse([tip[0] - 10, tip[1] - 10,
+                         tip[0] + 10, tip[1] + 10], fill=tint + (255,))
+        pen.ellipse([cx - 14, cy - 14, cx + 14, cy + 14], fill=WHITE + (255,))
 
 
-def smoke(d):
+def paint_puffs(pen):
     for sx, sy, sr in [(880, 1700, 70), (760, 1830, 90), (620, 1940, 105),
                        (980, 1640, 55), (700, 1900, 60)]:
-        d.ellipse([sx - sr, sy - sr, sx + sr, sy + sr],
-                  fill=(255, 255, 255, 46))
+        pen.ellipse([sx - sr, sy - sr, sx + sr, sy + sr],
+                    fill=(255, 255, 255, 46))
 
 
-def rainbow_trail(d):
-    path = quad_bezier((1024, 1560), (760, 1850), (430, 2048))
-    for i, col in enumerate(RAINBOW):
+def paint_exhaust(pen):
+    trail = bezier_quad((1024, 1560), (760, 1850), (430, 2048))
+    for i, tint in enumerate(SPECTRUM):
         off = (i - 2.5) * 30
-        d.line(shift(path, off * 0.55, -off * 0.35),
-               fill=col + (255,), width=30, joint="curve")
+        pen.line(nudge(trail, off * 0.55, -off * 0.35),
+                 fill=tint + (255,), width=30, joint="curve")
 
 
-def rocket(d):
-    x0, x1, y0, y1 = 890, 1158, 980, 1560
-    # body, with a shaded right side
-    d.rounded_rectangle([x0, y0, x1, y1], radius=120,
-                        fill=SNOW + (255,), outline=INK + (255,), width=10)
-    d.rounded_rectangle([x0 + 150, y0, x1, y1], radius=120,
-                        fill=(214, 222, 235, 255))
-    d.rounded_rectangle([x0, y0, x1, y1], radius=120,
-                        outline=INK + (255,), width=10)
-    # red stripe + rivets
-    d.rectangle([x0, 1330, x1, 1396], fill=CHERRY + (255,))
+def paint_rocket(pen):
+    left, right, top, bottom = 890, 1158, 980, 1560
+    # hull, shaded on the starboard side
+    pen.rounded_rectangle([left, top, right, bottom], radius=120,
+                          fill=WHITE + (255,), outline=DARK + (255,), width=10)
+    pen.rounded_rectangle([left + 150, top, right, bottom], radius=120,
+                          fill=(212, 220, 234, 255))
+    pen.rounded_rectangle([left, top, right, bottom], radius=120,
+                          outline=DARK + (255,), width=10)
+    # red band + rivets
+    pen.rectangle([left, 1330, right, 1396], fill=POPPY + (255,))
     for ry in (1060, 1160, 1470):
-        d.ellipse([x0 + 22, ry, x0 + 46, ry + 24], fill=(150, 160, 180, 255))
-    # fins
-    d.polygon([(x0 + 6, 1400), (x0 - 130, 1620), (x0 + 6, 1560)],
-              fill=CHERRY + (255,), outline=INK + (255,))
-    d.polygon([(x1 - 6, 1400), (x1 + 130, 1620), (x1 - 6, 1560)],
-              fill=CHERRY + (255,), outline=INK + (255,))
-    # flame: three nested tongues
-    for pts, col in [
+        pen.ellipse([left + 22, ry, left + 46, ry + 24],
+                    fill=(148, 158, 178, 255))
+    # tail fins
+    pen.polygon([(left + 6, 1400), (left - 130, 1620), (left + 6, bottom)],
+                fill=POPPY + (255,), outline=DARK + (255,))
+    pen.polygon([(right - 6, 1400), (right + 130, 1620), (right - 6, bottom)],
+                fill=POPPY + (255,), outline=DARK + (255,))
+    # flame: nested tongues, gold -> orange -> white
+    for shape, tint in [
             ([(940, 1560), (1110, 1560), (1064, 1780), (1024, 1890), (984, 1780)],
-             (255, 211, 42, 255)),
+             (255, 210, 40, 255)),
             ([(968, 1560), (1082, 1560), (1052, 1720), (1024, 1800), (998, 1720)],
-             (255, 127, 42, 255)),
+             (255, 126, 40, 255)),
             ([(992, 1560), (1058, 1560), (1038, 1670), (1024, 1720), (1012, 1670)],
              (255, 255, 255, 255))]:
-        d.polygon(pts, fill=col)
+        pen.polygon(shape, fill=tint)
 
 
-def kitten_astronaut(d):
+def paint_kitten(pen):
     hx, hy, hr = 1024, 800, 400
     # glass helmet dome
-    d.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=(176, 224, 255, 255))
-    d.ellipse([hx - hr, hy - hr, hx + hr, hy + hr], outline=INK + (255,), width=12)
+    pen.ellipse([hx - hr, hy - hr, hx + hr, hy + hr],
+                fill=(175, 223, 255, 255))
+    pen.ellipse([hx - hr, hy - hr, hx + hr, hy + hr],
+                outline=DARK + (255,), width=12)
     fx, fy, fr = hx, hy + 40, 250
-    # ears (outer fur, inner pink)
-    for sgn in (-1, 1):
-        d.polygon([(fx + sgn * 195, fy - 150), (fx + sgn * 260, fy - 330),
-                   (fx + sgn * 80, fy - 210)],
-                  fill=FUR + (255,), outline=INK + (255,))
-        d.polygon([(fx + sgn * 185, fy - 165), (fx + sgn * 225, fy - 285),
-                   (fx + sgn * 115, fy - 205)], fill=ROSE_PALE + (255,))
+    # ears: ginger outside, soft pink inside
+    for sign in (-1, 1):
+        pen.polygon([(fx + sign * 195, fy - 150), (fx + sign * 260, fy - 330),
+                     (fx + sign * 80, fy - 210)],
+                    fill=GINGER + (255,), outline=DARK + (255,))
+        pen.polygon([(fx + sign * 185, fy - 165), (fx + sign * 225, fy - 285),
+                     (fx + sign * 115, fy - 205)], fill=PINK_SOFT + (255,))
     # head
-    d.ellipse([fx - fr, fy - fr, fx + fr, fy + fr],
-              fill=FUR + (255,), outline=INK + (255,), width=10)
+    pen.ellipse([fx - fr, fy - fr, fx + fr, fy + fr],
+                fill=GINGER + (255,), outline=DARK + (255,), width=10)
     # forehead stripes
     for sx in (-90, 0, 90):
-        d.line([fx + sx - 14, fy - fr + 26, fx + sx + 14, fy - fr + 96],
-               fill=FUR_SHADE + (255,), width=16)
-    # muzzle
-    d.ellipse([fx - 130, fy + 30, fx + 130, fy + 185], fill=CREAM + (255,))
-    # huge sparkling eyes, looking up
+        pen.line([fx + sx - 14, fy - fr + 26, fx + sx + 14, fy - fr + 96],
+                 fill=GINGER_DARK + (255,), width=16)
+    # cream muzzle
+    pen.ellipse([fx - 130, fy + 30, fx + 130, fy + 185], fill=VANILLA + (255,))
+    # big sparkling eyes, gazing upward
     for ex in (-115, 115):
-        d.ellipse([fx + ex - 62, fy - 105, fx + ex + 62, fy + 15],
-                  fill=SNOW + (255,), outline=INK + (255,), width=7)
-        d.ellipse([fx + ex - 34, fy - 78, fx + ex + 34, fy - 2],
-                  fill=(43, 16, 85, 255))
-        d.ellipse([fx + ex - 30, fy - 82, fx + ex + 2, fy - 44],
-                  fill=SNOW + (255,))
-        d.ellipse([fx + ex + 12, fy - 42, fx + ex + 30, fy - 22],
-                  fill=SNOW + (255,))
+        pen.ellipse([fx + ex - 62, fy - 105, fx + ex + 62, fy + 15],
+                    fill=WHITE + (255,), outline=DARK + (255,), width=7)
+        pen.ellipse([fx + ex - 34, fy - 78, fx + ex + 34, fy - 2],
+                    fill=(40, 15, 82, 255))
+        pen.ellipse([fx + ex - 30, fy - 82, fx + ex + 2, fy - 44],
+                    fill=WHITE + (255,))
+        pen.ellipse([fx + ex + 12, fy - 42, fx + ex + 30, fy - 22],
+                    fill=WHITE + (255,))
     # blush
-    d.ellipse([fx - 205, fy + 55, fx - 125, fy + 115], fill=(255, 107, 139, 150))
-    d.ellipse([fx + 125, fy + 55, fx + 205, fy + 115], fill=(255, 107, 139, 150))
-    # nose + open happy mouth
-    d.polygon([(fx - 34, fy + 62), (fx + 34, fy + 62), (fx, fy + 104)],
-              fill=ROSE + (255,), outline=INK + (255,))
-    d.pieslice([fx - 62, fy + 96, fx + 62, fy + 190], 0, 180,
-               fill=(150, 32, 64, 255), outline=INK + (255,))
-    d.ellipse([fx - 34, fy + 132, fx + 34, fy + 178], fill=(255, 120, 140, 255))
+    pen.ellipse([fx - 205, fy + 55, fx - 125, fy + 115],
+                fill=(255, 105, 138, 150))
+    pen.ellipse([fx + 125, fy + 55, fx + 205, fy + 115],
+                fill=(255, 105, 138, 150))
+    # little triangle nose + open happy mouth
+    pen.polygon([(fx - 34, fy + 62), (fx + 34, fy + 62), (fx, fy + 104)],
+                fill=PINK + (255,), outline=DARK + (255,))
+    pen.pieslice([fx - 62, fy + 96, fx + 62, fy + 190], 0, 180,
+                 fill=(148, 30, 62, 255), outline=DARK + (255,))
+    pen.ellipse([fx - 34, fy + 132, fx + 34, fy + 178],
+                fill=(255, 118, 138, 255))
     # whiskers
     for side in (-1, 1):
         for wy, tilt in ((fy + 70, -18), (fy + 100, 0), (fy + 130, 18)):
-            x0 = fx + side * 130
-            d.line([x0, wy, x0 + side * 150, wy + tilt],
-                   fill=(43, 16, 85, 220), width=7)
-    # helmet rim + glass shine
-    d.ellipse([hx - hr, hy - hr, hx + hr, hy + hr],
-              outline=SNOW + (255,), width=26)
-    d.arc([hx - hr + 30, hy - hr + 30, hx + hr - 120, hy + hr - 120],
-          200, 320, fill=(255, 255, 255, 200), width=34)
-    d.ellipse([hx - 300, hy - 300, hx - 190, hy - 180],
-              fill=(255, 255, 255, 170))
+            start = fx + side * 130
+            pen.line([start, wy, start + side * 150, wy + tilt],
+                     fill=(40, 15, 82, 220), width=7)
+    # helmet rim, glass shine and glint
+    pen.ellipse([hx - hr, hy - hr, hx + hr, hy + hr],
+                outline=WHITE + (255,), width=26)
+    pen.arc([hx - hr + 30, hy - hr + 30, hx + hr - 120, hy + hr - 120],
+            200, 320, fill=(255, 255, 255, 200), width=34)
+    pen.ellipse([hx - 300, hy - 300, hx - 190, hy - 180],
+                fill=(255, 255, 255, 170))
 
 
-def wow_badge(d):
+def paint_badge(pen):
     bx, by = 1620, 320
-    pts = burst_polygon(bx, by, 235, 168)
-    d.polygon(pts, fill=GOLD + (255,), outline=INK + (255,))
-    d.polygon(pts, outline=(255, 127, 42, 255), width=10)
-    font = ImageFont.truetype(BOLD_FONT, 110)
-    d.text((bx, by), "WOW!", font=font, fill=INK + (255,),
-           anchor="mm", stroke_width=0)
+    outline_pts = starburst(bx, by, 235, 168)
+    pen.polygon(outline_pts, fill=SUNNY + (255,), outline=DARK + (255,))
+    pen.polygon(outline_pts, outline=(255, 126, 40, 255), width=10)
+    heavy = ImageFont.truetype(HEAVY_FONT, 110)
+    pen.text((bx, by), "WOW!", font=heavy, fill=DARK + (255,), anchor="mm")
 
 
-def confetti(d):
-    cols = [GOLD, ROSE, MINT, SKY, SNOW, LEAF]
+def paint_confetti(pen):
+    shades = [SUNNY, PINK, AQUA, AZURE, WHITE, MINTY]
     for _ in range(110):
-        x = rng.uniform(40, W - 40)
-        y = rng.uniform(40, W - 40)
+        x = dice.uniform(40, CANVAS - 40)
+        y = dice.uniform(40, CANVAS - 40)
         if (x - 1024) ** 2 + (y - 800) ** 2 < 330 ** 2:
             continue  # keep the hero face readable
-        col = rng.choice(cols)
-        w = rng.uniform(16, 34)
-        h = rng.uniform(8, 16)
-        a = rng.uniform(0, math.pi)
-        ca, sa = math.cos(a), math.sin(a)
+        tint = dice.choice(shades)
+        w = dice.uniform(16, 34)
+        h = dice.uniform(8, 16)
+        ang = dice.uniform(0, math.pi)
+        ca, sa = math.cos(ang), math.sin(ang)
         corners = []
         for dx, dy in [(-w, -h), (w, -h), (w, h), (-w, h)]:
             corners.append((x + dx * ca - dy * sa, y + dx * sa + dy * ca))
-        d.polygon(corners, fill=col + (255,))
+        pen.polygon(corners, fill=tint + (255,))
 
 
-def draw():
-    img = sky_gradient(W, W, [
-        (0.00, DEEP_SPACE),
-        (0.35, PLUM),
-        (0.65, RASPBERRY),
-        (1.00, SUNSET),
+def compose():
+    picture = vertical_blend(CANVAS, CANVAS, [
+        (0.00, NIGHT),
+        (0.35, GRAPE),
+        (0.65, BERRY),
+        (1.00, EMBER),
     ]).convert("RGBA")
 
     # soft pink glow behind the hero
-    glow = Image.new("RGBA", (W, W), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gd.ellipse([512, 350, 1536, 1450], fill=(255, 120, 180, 70))
-    img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(180)))
+    halo = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+    halo_pen = ImageDraw.Draw(halo)
+    halo_pen.ellipse([512, 350, 1536, 1450], fill=(255, 120, 180, 70))
+    picture = Image.alpha_composite(
+        picture, halo.filter(ImageFilter.GaussianBlur(180)))
 
-    d = ImageDraw.Draw(img, "RGBA")
-    scatter_stars(d)
-    ringed_planet(d)
-    crater_moon(d)
-    fireworks(d)
-    smoke(d)
-    rainbow_trail(d)
-    rocket(d)
-    kitten_astronaut(d)
-    wow_badge(d)
-    confetti(d)
-    return img.convert("RGB").resize((FINAL, FINAL), Image.LANCZOS)
+    pen = ImageDraw.Draw(picture, "RGBA")
+    paint_stars(pen)
+    paint_planet(pen)
+    paint_moon(pen)
+    paint_fireworks(pen)
+    paint_puffs(pen)
+    paint_exhaust(pen)
+    paint_rocket(pen)
+    paint_kitten(pen)
+    paint_badge(pen)
+    paint_confetti(pen)
+    return picture.convert("RGB").resize((OUT_PX, OUT_PX), Image.LANCZOS)
 
 
 if __name__ == "__main__":
-    pic = draw()
-    pic.save(OUT, format="PNG", optimize=True)
-    print(f"wrote {OUT} {pic.size}")
+    art = compose()
+    art.save(TARGET, format="PNG", optimize=True)
+    print(f"wrote {TARGET} {art.size}")

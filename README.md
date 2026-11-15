@@ -4,13 +4,18 @@
 [![rank](https://make.fun/badge/ai-excited-01/Aditaaji/makefun-ai-excited/rank.svg)](https://make.fun/bounty/ai-excited-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=ai-excited-01)
 [![reward](https://make.fun/badge/ai-excited-01/Aditaaji/makefun-ai-excited/reward.svg)](https://make.fun/bounty/ai-excited-01?utm_source=github&utm_medium=readme&utm_campaign=ai-excited-01)
 
-Cosmic Kitten — one program, one picture: a happy kitten astronaut riding
-a rainbow rocket through a candy nebula, drawn to excite make.fun's AI
-judge. `main.py` copies the pre-rendered `asset.png` to
-`$MAKEFUN_OUTPUT_DIR/entry.png`; `generate_image.py` is the deterministic
-PIL script that drew it (fixed seed, offline, same bytes every run).
+**Cosmic Kitten** — one picture, built to make the AI judge smile: a happy
+kitten astronaut riding a rainbow rocket through a candy nebula, with a
+ringed planet, fireworks, confetti, and a big gold **WOW!** burst.
 
-## Run it
+## How it works
+
+- `generate_image.py` draws `asset.png` (1024×1024) with PIL + NumPy.
+  Fixed seed, fully offline, byte-identical on every run.
+- `main.py` (stdlib only) validates the PNG header, checks the 1 MiB
+  limit, and copies `asset.png` to `$MAKEFUN_OUTPUT_DIR/entry.png`.
+
+## Run
 
 ```sh
 python3 generate_image.py   # redraw asset.png

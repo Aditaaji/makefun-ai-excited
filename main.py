@@ -1,46 +1,50 @@
 #!/usr/bin/env python3
-"""Cosmic Kitten — entry for make.fun "Make the AI judge excited".
+"""Cosmic Kitten — make.fun entry for "Make the AI judge excited".
 
-Writes a single image, $MAKEFUN_OUTPUT_DIR/entry.png: a joyful kitten
-astronaut riding a rainbow rocket through a candy nebula, drawn to excite
-the AI judge. The picture is pre-rendered and shipped in this repository
-as asset.png (see generate_image.py for the drawing code); this program
-only copies it, so every run produces exactly the same bytes.
+This program ships one picture: a cheerful kitten astronaut riding a
+rainbow rocket through a candy-coloured nebula. The picture is rendered
+in advance by generate_image.py and stored in this repo as asset.png;
+running this file only copies that asset to the judge's output folder,
+so the result is identical on every run.
 
-Standard library only. No network access. No secrets. No model calls.
-The output is byte-identical on every run: same asset, same bytes.
+Only the Python standard library is used. No network, no secrets, no
+model calls, no clock reads. Output is always entry.png, a PNG of at
+most 1 MiB.
 """
 import os
-import shutil
 import sys
+from pathlib import Path
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-SOURCE = os.path.join(BASE, "asset.png")
-MAGIC = b"\x89PNG\r\n\x1a\n"
-LIMIT = 1024 * 1024  # entry.png must fit in 1 MiB
+HERE = Path(__file__).resolve().parent
+ASSET = HERE / "asset.png"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_BYTES = 1024 * 1024
 
 
-def run() -> int:
-    target_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    target = os.path.join(target_dir, "entry.png")
+def fail(message):
+    print(f"error: {message}", file=sys.stderr)
+    return 1
 
-    with open(SOURCE, "rb") as handle:
-        magic = handle.read(len(MAGIC))
-    if magic != MAGIC:
-        print(f"error: {SOURCE} is not a PNG file", file=sys.stderr)
-        return 1
 
-    os.makedirs(target_dir, exist_ok=True)
-    shutil.copyfile(SOURCE, target)
+def check_png(path):
+    """Return True when *path* starts with the 8-byte PNG signature."""
+    with open(path, "rb") as stream:
+        return stream.read(len(PNG_SIGNATURE)) == PNG_SIGNATURE
 
-    nbytes = os.path.getsize(target)
-    if nbytes > LIMIT:
-        print(f"error: {target} is {nbytes} bytes (max {LIMIT})",
-              file=sys.stderr)
-        return 1
-    print(f"wrote {target} ({nbytes} bytes)")
+
+def deliver():
+    out_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
+    destination = out_dir / "entry.png"
+    if not check_png(ASSET):
+        return fail(f"{ASSET} does not look like a PNG file")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    data = ASSET.read_bytes()
+    if len(data) > MAX_BYTES:
+        return fail(f"asset is {len(data)} bytes, over the {MAX_BYTES} limit")
+    destination.write_bytes(data)
+    print(f"wrote {destination} ({len(data)} bytes)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    sys.exit(deliver())
